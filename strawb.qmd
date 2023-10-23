@@ -1,0 +1,535 @@
+---
+title: "Stawberries: exploratory data analysis"
+author: Ruicheng Zhang
+date: 2023 Oct 16
+format: pdf
+engine: knitr
+---
+
+## Initial questions
+Is the data complete, what direction do we need to take our research, is there a relationship between the variables, and is this data source reliable?
+
+## Data acquisition and assessment
+```{r setup, include=FALSE}
+#| label: Load libraries
+#| warning: false
+#| message: false
+#| echo: false
+knitr::opts_chunk$set(echo = TRUE,warning=FALSE)
+library(knitr)  
+library(kableExtra)
+library(tidyverse)
+library(stringr)
+library(ggplot2)
+library(reshape2)
+```
+
+<!-- Read the file -->
+
+```{r warning=FALSE, message=FALSE}
+#| label: read data - glimpse 
+#| warning: false
+#| message: false
+#| echo: false
+strawberry <- read_csv("strawberry.csv", col_names = TRUE)
+
+glimpse(strawberry)
+```
+```{r}
+state <- table(strawberry$State)
+barplot(state, main="Distribution of the number of data entries by state", las=2)
+```
+
+
+```{r}
+
+# Filtering non-numeric values in Value fields and converting them to numbers
+strawberry$Value <- as.numeric(as.character(strawberry$Value), na.rm=F)
+
+# Grouping by state and year and totaling strawberry sales
+sales_by_state_year <- strawberry %>%
+  group_by(State, Year) %>%
+  summarise(Value = sum(Value, na.rm=TRUE), .groups='drop')
+
+# Select the top 10 states with the highest sales
+top_states <- sales_by_state_year %>%
+  group_by(State) %>%
+  summarise(Total = sum(Value), .groups='drop') %>%
+  arrange(-Total) %>%
+  head(10) %>%
+  pull(State)
+
+# Filtering data
+filtered_data <- sales_by_state_year %>%
+  filter(State %in% top_states)
+
+# Plotting stacked bar charts
+ggplot(filtered_data, aes(x=as.factor(Year), y=Value, fill=State)) +
+  geom_bar(stat="identity", position="stack") +
+  labs(title="Top 10 States: Strawberry Sales by Year", x="Year", y="Sales Value") +
+  theme_minimal()
+
+
+
+```
+## Data cleaning and organization
+
+<!-- Remove columns with a single value in all columns -->
+
+```{r}
+#| label: drop one-item columns
+#| echo: false
+
+## define function
+drop_one_value_col <- function(df){
+col_name <- NULL
+col_val <- NULL
+suppressWarnings({
+for(i in 1:dim(df)[2]){
+if((df |> distinct(df[,i]) |> count()) == 1){
+  col_name = c(col_name, colnames(df[i]))
+  col_val = c(col_val, df[1,i])  
+} }
+})
+
+if(is.null(col_name)){return("No Columns to drop")}else{
+   col_val = unlist(col_val)
+   attributes(col_val) = NULL
+   drp = data.frame(col_name, col_val)
+   return(drp)
+   }
+}
+
+str <- drop_one_value_col(strawberry)
+
+# str |> kable(caption = "Dropped Single-Value Columns: names and values")
+
+str <- str$col_name
+
+strawberry <- strawberry |> select(!all_of(str))
+
+
+
+## applying the function a second time 
+## tests the function when there aren't any 
+## one-value columns
+#####  drop_one_value_col(strawberry)
+
+```
+
+<!-- Glimpse of strawberry data after dropping single-value columns. -->
+
+```{r}
+#| label: glimpse of strawberry data
+#| echo: false
+
+glimpse(strawberry)
+
+```
+
+
+```{r}
+#| label: examine California data
+#| echo: false
+
+## filter rows of California data from the CENSUS data
+calif_census <- strawberry |> filter((State=="CALIFORNIA") & (Program=="CENSUS"))
+
+
+## ## filter rows of California data from the SURVEY data
+calif_survey <- strawberry |> filter((State=="CALIFORNIA") & (Program=="SURVEY"))
+
+census_col <- colnames(calif_census)
+
+survey_col <- colnames(calif_survey)
+
+```
+
+
+```{r}
+#| label: split srawberry into census and survey pieces
+#| echo: false
+
+strwb_census <- strawberry |> filter(Program == "CENSUS")
+
+strwb_survey <- strawberry |> filter(Program == "SURVEY")
+
+
+rm(calif_census, calif_survey)
+
+strwb_census <- strwb_census |>
+  separate_wider_delim(  cols = `Data Item`,
+                         delim = ",",
+                         names = c("Fruit",
+                                 "temp1",
+                                 "temp2",
+                                 "temp3"),
+                         too_many = "error",
+                         too_few = "align_start"
+                       )
+
+
+## split temp1 into crop_type, Prop_acct
+
+strwb_census <- strwb_census |>
+  separate_wider_delim(  cols = temp1,
+                         delim = " - ",
+                         names = c("crop_type",
+                                 "prop_acct"),
+                         too_many = "error",
+                         too_few = "align_start"
+                       )
+
+# glimpse(strwb_census)
+
+strwb_census$crop_type <- str_trim(strwb_census$crop_type, side = "both")
+
+strwb_census$temp2 <- str_trim(strwb_census$temp2, side = "both")
+
+strwb_census$temp3 <- str_trim(strwb_census$temp3, side = "both")
+
+
+strwb_census <- strwb_census |> mutate(`Fresh Market` = temp2, .after = temp2)
+
+## Remove cells in `Fresh Market` column 
+##   that begin "MEASURED"
+strwb_census$`Fresh Market` <- strwb_census$`Fresh Market` |> str_replace( "^MEA.*", "")
+
+## Remove cells in `Fresh Market` column 
+##   that begin "PROCESSING" 
+strwb_census$`Fresh Market` <- strwb_census$`Fresh Market` |> str_replace( "^P.*", "")
+
+## substitute a space for NA in `Fresh Market` column
+strwb_census$`Fresh Market`[is.na(strwb_census$`Fresh Market`)] <- ""  
+
+## in temp2 column, remove cells that begin "FRESH"
+ strwb_census$temp2 <- strwb_census$temp2 |> str_replace("^F.*", "")
+
+## Now fix the entries in the `Fresh Market` column
+##   Remove "FRESH MARKET - " from the cells
+strwb_census$`Fresh Market` <- strwb_census$`Fresh Market` |> str_replace("^FRESH MARKET - ", "")
+
+
+## Make a copy of temp2 named `Process Market`
+strwb_census <- strwb_census |> mutate(`Process Market` = temp2, .after = temp2)
+
+## remove `Process Market` cells beginning "MEASURED"
+strwb_census$`Process Market` <-  strwb_census$`Process Market` |> str_replace("^MEA.*", "")
+
+## substitute space for NA in `Process Market` column
+strwb_census$`Process Market`[is.na(strwb_census$`Process Market`)] <- ""
+
+## In temp2, remove cells that begin "PROCESSING"
+strwb_census$temp2 <- strwb_census$temp2 |> str_replace("^P.*", "")
+
+## In `Processing Market`, remove "PROCESSING - " from cells
+strwb_census$`Process Market` <-  strwb_census$`Process Market` |> str_replace("PROCESSING - ", "") 
+
+
+## substitute a space for NA in prop_acct column
+strwb_census$prop_acct[is.na(strwb_census$prop_acct)] <- "" 
+
+## substitute a space for NA in temp2 column
+strwb_census$temp2[is.na(strwb_census$temp2)] <- "" 
+
+## substitute a space for NA in temp2 column
+strwb_census$temp3[is.na(strwb_census$temp3)] <- "" 
+
+
+strwb_census <- strwb_census |> unite(temp2, temp3, col="Metric", sep="")
+
+## Now fix the entries in the Metric column
+##   Remove "MEASURED IN " from the cells
+strwb_census$Metric <- strwb_census$Metric |> str_replace("MEASURED IN ", "")
+
+## move Metric to the end
+strwb_census <- strwb_census |> relocate(Metric, .before = Domain)
+
+#strwb_census <- strwb_census |> relocate(`Process Market`, .before = Metric)
+
+strwb_census <- strwb_census |> rename(Totals = prop_acct)
+
+#drop_one_value_col(strwb_census)
+
+
+```
+
+<!-- ## The Value column transformation -->
+
+```{r}
+#| label: define functions dcomma and footnote finder
+#| echo: false
+#| warning: false
+#| message: false
+#| eval: true
+
+
+vals <- strwb_census$Value
+
+
+g1 <- sub(",", "", vals)
+# vals[1:20]
+# g1[1:20]
+
+
+g2 <- gsub(",", "", vals)
+# vals[1:20]
+# g2[1:20]
+
+
+## stringr - str_replace(), str_replace_all()
+
+## LOOK -- see ref for stingr pkg
+a <- vals |> str_detect(",")
+
+# vals[1:20]
+# a[1:20]
+
+## Still strings!!
+
+b <- vals |> str_replace(",", "")
+# vals[1:20]
+# b[1:20]
+
+c <- vals |> str_replace_all(",", "")
+# vals[1:20]
+# c[1:20]
+
+## Now notice what happens when the
+## the strings of digits are cast to numerics.
+
+## for example
+c <- as.numeric(c)
+# c[1:20]
+
+
+### remove commas from Value entries
+dcomma <- function(c){
+  x_new <- as.numeric(gsub(",", "", c))
+  return(x_new)
+}
+
+
+
+#########################################  footnotes
+
+## finds single uppor case Character in parens in s2
+## e.g. "(D)"
+
+## To fine the location and value of the footnotes
+
+v <- strwb_census$Value
+
+
+## find the footnote locations
+## fn_i: locations 
+fn_i <- v |> str_detect("^\\([:upper:]\\)$") ## returns
+
+
+## dcomma returns numbers and NA's
+v1 <- dcomma(v)
+
+## locations of NA's
+na_i <- is.na(v1)
+
+dcomma <- function(c){
+  suppressWarnings({
+  xnew = as.numeric(gsub(",", "", c))
+  fns = unique(c[is.na(xnew)])
+  vtran = list("new_vec" = xnew, "footnotes" = fns)
+  return(vtran)
+  })
+}
+
+ 
+v_trns <- dcomma(v)
+ 
+
+ a <- v_trns$new_vec
+ # a[1:20]
+ 
+ # v_trns$footnotes
+ 
+
+```
+
+## EDA
+First,for the survey part of the data is processed by splitting the chemistry into two columns and removing meaningless variables.
+```{r}
+stb_survey <- strwb_survey %>%
+  filter(str_detect(`Data Item`, "MEASURED IN")) %>%
+  mutate(`Data Item` = str_extract(`Data Item`, "(?<=MEASURED IN ).*"))
+stb_survey <- stb_survey %>%
+  mutate(
+    Chemical = if_else(str_detect(`Domain Category`, "\\(.*=.*\\)"),
+                       str_extract(`Domain Category`, "(?<=\\().*?(?=\\=)"),
+                       NA_character_),
+    Chemical_Code = if_else(str_detect(`Domain Category`, "\\(.*=.*\\)"),
+                            str_extract(`Domain Category`, "(?<=\\=).*?(?=\\))"),
+                            NA_character_)
+  )
+
+
+stb_survey <- subset(stb_survey, select = -Program)
+stb_survey <- subset(stb_survey, select = -`Domain Category`)
+```
+Dealing with Missing Values, Outliers, and Duplicates
+```{r}
+stb_survey <- stb_survey[, !sapply(stb_survey, function(col) all(is.na(col)))]
+
+
+stb_survey <- stb_survey[!is.na(stb_survey$Value), ]
+
+
+stb_survey <- stb_survey[stb_survey$State != "OTHER STATES", ]
+
+
+```
+
+```{r}
+strwb_census$`CV (%)`<- as.numeric(strwb_census$`CV (%)`)
+strwb_census <- strwb_census %>%
+  select(-Program,-`Period`,-Fruit,-crop_type,-Domain,-`Domain Category`)
+
+```
+Do the same for census
+
+```{r}
+
+```
+
+
+<!-- Once the data has been cleaned and organized, you must conduct your own EDA. Be sure to include a discussion of your analysis of the chemical information, including citations for data and other information you have used. Visualizations should play a key role in your analysis. Plots should be labeled and captioned. -->
+
+
+
+```{r}
+
+stb_survey$Domain <- gsub("CHEMICAL,", "", stb_survey$Domain)
+stb_survey$Domain <- trimws(stb_survey$Domain)
+
+
+chemical_counts <- table(stb_survey$Chemical)
+top_10_chemicals <- names(sort(chemical_counts, decreasing = TRUE)[1:27])
+bottom_10_chemicals <- names(sort(chemical_counts)[1:8])
+selected_chemicals <- c(top_10_chemicals, bottom_10_chemicals)
+
+
+subset_stb_survey <- stb_survey[stb_survey$Chemical %in% selected_chemicals, ]
+
+
+ggplot(subset_stb_survey, aes(x = Chemical, fill = Domain)) +
+  geom_bar() +
+  scale_x_discrete(limits = selected_chemicals) +
+  labs(title = "Frequency of Chemicals by Domain") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+For the top ten chemicals, such as "MALATHION" and "2,4-D", they are mainly associated with the fields of "FIELD CROPS" and "FRUIT & TREE NUTS".
+For chemicals in the bottom ten frequencies, such as "CHLORPYRIFOS METHYL" and "DIAZINON", their frequencies are lower, but they are also associated with several domains.
+Some domains (e.g., "FRUIT & TREE NUTS" and "FIELD CROPS") occur in multiple chemicals, while others occur less frequently.
+
+```{r}
+ggplot(subset_stb_survey, aes(x = Chemical, fill = State)) +
+  geom_bar() +
+  scale_x_discrete(limits = selected_chemicals) +
+  labs(title = "Frequency of Chemicals by State") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+
+
+```{r}
+ggplot(stb_survey) +
+ aes(x = Year, y = Value, colour = State, size = Value) +
+ geom_jitter() +
+ scale_color_brewer(palette = "RdYlGn", 
+ direction = 1) +
+ labs(title = "Value vs. Year") +
+ theme_minimal() +
+ theme(axis.title.y = element_text(size = 20L, 
+ face = "bold"), axis.title.x = element_text(size = 20L, face = "bold"))
+```
+
+There are significant differences in Value across states. Some states (e.g., Florida and Washington, D.C.) have wider ranges of Value, indicating that the data are more variable in these states. Most states have a median Value in the lower range, but some have a higher median Value.
+
+
+
+
+
+```{r}
+state_value_mean <- sales_by_state_year %>%
+  group_by(State) %>%
+  summarise(MeanValue = mean(Value, na.rm = TRUE))
+
+capitalize_first <- function(string) {
+  paste0(tolower(substr(string, 1, nchar(string))))
+}
+
+state_value_mean$State<-sapply(state_value_mean$State, capitalize_first)
+
+library(maps)
+
+usa_map <- map_data("state")
+
+state_value_mean$region <- state_value_mean$State
+
+merged_data <- left_join(usa_map, state_value_mean, by = "region")
+
+
+ggplot(data = merged_data, aes(x = long, y = lat, group = group, fill = MeanValue)) + 
+  geom_polygon(color = "white") +
+  scale_fill_viridis_c(na.value = "grey50", name = "Mean Value") +
+  labs(title = "Mean Value by State") +
+  coord_fixed(1.3) + 
+  theme_minimal()
+```
+We further explore Value and the specific performance of each state, and with the help of the map we can clearly see the specifics of each state.
+```{r}
+state_cv_mean <- strwb_census %>%
+  group_by(State) %>%
+  summarise(MeanCV = mean(`CV (%)`, na.rm = TRUE))
+state_mean <- sales_by_state_year %>%
+  group_by(State) %>%
+  summarise(MeanValue = mean(Value, na.rm = TRUE))
+
+merged_d <- left_join(state_cv_mean, state_mean, by = "State")
+```
+
+```{r}
+merged_d[is.na(merged_d)] <- 0
+merged_d$State<-sapply(merged_d$State, capitalize_first)
+
+merged_d$region <- merged_d$State
+
+merg <- left_join(usa_map, merged_d, by = "region")
+
+ggplot(data = merg, aes(x = long, y = lat, group = group,fill = MeanCV )) + 
+  geom_polygon(color = "white") +
+  scale_fill_viridis_c(na.value = "grey50", name = "Mean CV(%)") +
+  labs(title = "Mean CV(%) by State") +
+  coord_fixed(1.3) + 
+  theme_minimal()
+```
+
+
+
+
+
+
+
+<p style="page-break-before: always">
+
+</p>
+
+
+
+
+## References
+https://quickstats.nass.usda.gov/src/glossary.pdf
+https://quickstats.nass.usda.gov/param_define
+
+

@@ -372,6 +372,9 @@ stb_survey <- stb_survey %>%
 
 stb_survey <- subset(stb_survey, select = -Program)
 stb_survey <- subset(stb_survey, select = -`Domain Category`)
+
+stb_survey$Chemical_Code_num <- as.numeric(stb_survey$Chemical_Code)
+stb_survey$Chemical_Code_str <- ifelse(is.na(stb_survey$Chemical_Code_num),NA,sprintf("%06d", stb_survey$Chemical_Code_num))
 ```
 Dealing with Missing Values, Outliers, and Duplicates
 ```{r}
@@ -430,6 +433,15 @@ For chemicals in the bottom ten frequencies, such as "CHLORPYRIFOS METHYL" and "
 Some domains (e.g., "FRUIT & TREE NUTS" and "FIELD CROPS") occur in multiple chemicals, while others occur less frequently.
 
 ```{r}
+pc1<- read.csv("/Users/zhangruicheng/Documents/MSSPbootcampRZ/straw1/merage.csv", header=T)
+pc1$k <- as.numeric(pc1$k)
+pc1$k <- ifelse(is.na(pc1$k),NA,sprintf("%06d", pc1$k))
+names(pc1) <- c("chemical","Chemical_Code_str","cas") 
+df_strw <- merge(stb_survey,pc1, x.by = "Chemical_Code_str",y.by="cas" )
+
+```
+
+```{r}
 ggplot(subset_stb_survey, aes(x = Chemical, fill = State)) +
   geom_bar() +
   scale_x_discrete(limits = selected_chemicals) +
@@ -439,8 +451,38 @@ ggplot(subset_stb_survey, aes(x = Chemical, fill = State)) +
 
 ```
 
+```{r}
+ggplot(df_strw, aes(x = Chemical, fill = cas)) +
+  geom_bar() +
+  scale_x_discrete(limits = selected_chemicals) +
+  labs(title = "Frequency of Chemicals by Domain") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+df_strw %>%
+ filter(Value >= 497L & Value <= 900L) %>%
+ ggplot() +
+ aes(x = cas, fill = Chemical) +
+ geom_bar() +
+ scale_fill_hue(direction = 1) +
+ theme_minimal()
+```
 
 
+
+```{r}
+ggplot(df_strw) +
+ aes(x = Year, y = Value, colour = cas, size = Value) +
+ geom_jitter() +
+ scale_color_brewer(palette = "RdYlGn", 
+ direction = 1) +
+ labs(title = "Value vs. Year") +
+ theme_minimal() +
+ theme(axis.title.y = element_text(size = 20L, 
+ face = "bold"), axis.title.x = element_text(size = 20L, face = "bold"))
+
+```
 
 ```{r}
 ggplot(stb_survey) +
@@ -514,10 +556,6 @@ ggplot(data = merg, aes(x = long, y = lat, group = group,fill = MeanCV )) +
   coord_fixed(1.3) + 
   theme_minimal()
 ```
-
-
-
-
 
 
 
